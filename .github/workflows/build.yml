@@ -5,14 +5,18 @@ on:
   push:
     branches:
       - master
+  pull_request:
 
 jobs:
   build_windows:
     name: Windows Build
     runs-on: windows-latest
 
+    permissions:
+      contents: read
+
     steps:
-      - name: Checkout
+      - name: Checkout repository
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
@@ -27,43 +31,108 @@ jobs:
             base-devel
             git
             make
+            diffutils
+            perl
             mingw-w64-x86_64-toolchain
             mingw-w64-x86_64-openssl
             mingw-w64-x86_64-zlib
 
-      - name: Build LZFSE
+      - name: Show toolchain information
         shell: msys2 {0}
         run: |
-          make -C lzfse \
+          set -eux
+          gcc --version
+          make --version
+          pkg-config --version
+          pkg-config --modversion openssl
+          git submodule status
+
+      - name: Build bundled LZFSE
+        shell: msys2 {0}
+        run: |
+          set -euxo pipefail
+
+          make -C lzfse clean || true
+
+          make -C lzfse -j1 \
             CC=gcc \
             LD=gcc
+
+          echo "LZFSE build output:"
+          find lzfse -maxdepth 3 -type f \
+            \( -name '*.a' -o -name '*.dll' -o -name '*.o' \) \
+            -print
 
       - name: Build img4
         shell: msys2 {0}
         run: |
-          make \
+          set -euxo pipefail
+
+          make clean || true
+
+          make -j1 \
             CC=gcc \
-            LD=gcc \
-            CORECRYPTO=1
+            LD=gcc
 
-      - name: Inspect build
+      - name: Locate executable
         shell: msys2 {0}
         run: |
-          file img4.exe || true
-          ldd img4.exe || true
-          ./img4.exe 2>&1 || true
+          set -eux
 
-      - name: Prepare artifact
+          echo "Repository root:"
+          ls -la
+
+          echo "Executable candidates:"
+          find . -maxdepth 3 -type f \
+            \( -name 'img4' -o -name 'img4.exe' \) \
+            -print
+
+          if [ -f img4.exe ]; then
+            file img4.exe
+          elif [ -f img4 ]; then
+            file img4
+          else
+            echo "img4 executable was not produced."
+            exit 1
+          fi
+
+      - name: Prepare Windows artifact
         shell: msys2 {0}
         run: |
+          set -euxo pipefail
+
           mkdir -p dist
 
-          cp img4.exe dist/
+          if [ -f img4.exe ]; then
+            cp img4.exe dist/img4.exe
+          elif [ -f img4 ]; then
+            cp img4 dist/img4.exe
+          else
+            echo "Unable to find img4 executable."
+            exit 1
+          fi
 
-          ldd img4.exe \
+          echo "Runtime dependencies:"
+          ldd dist/img4.exe || true
+
+          ldd dist/img4.exe \
             | awk '/\/mingw64\// { print $3 }' \
             | sort -u \
-            | xargs -r -I '{}' cp '{}' dist/
+            | while read -r dll; do
+                if [ -n "$dll" ] && [ -f "$dll" ]; then
+                  cp "$dll" dist/
+                fi
+              done
+
+          echo "Artifact contents:"
+          ls -lah dist
+
+      - name: Test executable
+        shell: msys2 {0}
+        run: |
+          set -eux
+
+          ./dist/img4.exe 2>&1 || true
 
       - name: Upload Windows artifact
         uses: actions/upload-artifact@v4
