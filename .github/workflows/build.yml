@@ -36,6 +36,30 @@ jobs:
             mingw-w64-x86_64-toolchain
             mingw-w64-x86_64-openssl
             mingw-w64-x86_64-zlib
+            
+      - name: Patch img4lib for Windows
+        shell: msys2 {0}
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path("libvfs/vfs_file.c")
+          text = path.read_text()
+
+          text = text.replace(
+              '#include "vfs.h"',
+              '''#ifdef _WIN32
+          #include <io.h>
+          #define fsync _commit
+          #endif
+
+          #include "vfs.h"'''
+          )
+
+          path.write_text(text)
+          PY
+
+          grep -n -A6 -B3 "_commit" libvfs/vfs_file.c
 
       - name: Show toolchain information
         shell: msys2 {0}
