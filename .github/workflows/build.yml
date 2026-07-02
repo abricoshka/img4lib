@@ -1,0 +1,74 @@
+name: Build img4 for Windows
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - master
+
+jobs:
+  build_windows:
+    name: Windows Build
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          submodules: recursive
+
+      - name: Setup MSYS2
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW64
+          update: true
+          install: >-
+            base-devel
+            git
+            make
+            mingw-w64-x86_64-toolchain
+            mingw-w64-x86_64-openssl
+            mingw-w64-x86_64-zlib
+
+      - name: Build LZFSE
+        shell: msys2 {0}
+        run: |
+          make -C lzfse \
+            CC=gcc \
+            LD=gcc
+
+      - name: Build img4
+        shell: msys2 {0}
+        run: |
+          make \
+            CC=gcc \
+            LD=gcc \
+            CORECRYPTO=1
+
+      - name: Inspect build
+        shell: msys2 {0}
+        run: |
+          file img4.exe || true
+          ldd img4.exe || true
+          ./img4.exe 2>&1 || true
+
+      - name: Prepare artifact
+        shell: msys2 {0}
+        run: |
+          mkdir -p dist
+
+          cp img4.exe dist/
+
+          ldd img4.exe \
+            | awk '/\/mingw64\// { print $3 }' \
+            | sort -u \
+            | xargs -r -I '{}' cp '{}' dist/
+
+      - name: Upload Windows artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: img4-windows-x86_64
+          path: dist/
+          if-no-files-found: error
+          retention-days: 14
